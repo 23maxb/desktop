@@ -228,7 +228,7 @@ export class ZenLibraryHistorySection extends ZenLibrarySearchSection {
   }
 
   onSearchChanged() {
-    this.#resetAndFetch();
+    return this.#resetAndFetch();
   }
 
   onFiltersChanged() {
@@ -261,7 +261,7 @@ export class ZenLibraryHistorySection extends ZenLibrarySearchSection {
   #resetAndFetch() {
     this.#limit = PAGE_SIZE;
     this.#exhausted = false;
-    this.#fetch();
+    return this.#fetch();
   }
 
   /**
@@ -439,8 +439,18 @@ export class ZenLibraryHistorySection extends ZenLibrarySearchSection {
    * @param {MouseEvent} [event] - What asked for it
    */
   #openVisit(visit, event) {
-    const inBackground =
-      !!event && (event.getModifierState("Accel") || event.button === 1);
+    this.#openVisitIn(
+      visit,
+      !!event && (event.getModifierState("Accel") || event.button === 1)
+    );
+  }
+
+  /**
+   * @param {object} visit
+   * @param {boolean} inBackground - Whether to leave the tab in the background
+   *   and the library open
+   */
+  #openVisitIn(visit, inBackground) {
     const openTab =
       visit.closedId === undefined
         ? () => window.openTrustedLinkIn(visit.url, "tab", { inBackground })
@@ -452,6 +462,39 @@ export class ZenLibraryHistorySection extends ZenLibrarySearchSection {
     }
     this.library.keepOpenWhile(openTab);
     gZenUIManager.showToast("library-history-opened-in-background");
+  }
+
+  onRowKeyActivate(row, { inBackground, glance }) {
+    const visit = row.libraryItem;
+    if (!visit) {
+      return;
+    }
+    if (glance) {
+      this.#glanceVisit(visit);
+      return;
+    }
+    this.#openVisitIn(visit, inBackground);
+  }
+
+  /**
+   * Closes the library and opens a visit in a glance over the current tab,
+   * from where it can be expanded into a tab of its own.
+   *
+   * @param {object} visit
+   */
+  async #glanceVisit(visit) {
+    await this.library.constructor.animateProgress(0);
+    const { width, height } = gBrowser.tabpanels.getBoundingClientRect();
+    const data = {
+      url: visit.url,
+      clientX: width / 2,
+      clientY: height / 2,
+      width: 0,
+      height: 0,
+      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+    };
+    gZenGlanceManager.lastLinkClickData = data;
+    gZenGlanceManager.openGlance(data);
   }
 
   /**
@@ -561,6 +604,7 @@ export class ZenLibraryHistorySection extends ZenLibrarySearchSection {
       <div
         class="zen-library-row"
         draggable="true"
+        .libraryItem=${visit}
         @click=${event => this.#openVisit(visit, event)}
         @auxclick=${event => {
           if (event.button === 1) {
