@@ -35,6 +35,7 @@ export class ZenLibrarySearchSection extends MozLitElement {
   };
 
   #searchDebounce = null;
+  #searchDone = Promise.resolve();
   #sentinelObserver = null;
 
   constructor() {
@@ -76,6 +77,21 @@ export class ZenLibrarySearchSection extends MozLitElement {
 
   onSearchChanged() {}
   onFiltersChanged() {}
+
+  /**
+   * Opens what a row stands for, when it is picked from the keyboard. Sections
+   * whose rows can be opened in other ways override this.
+   *
+   * @param {Element} row - The row with focus
+   * @param {object} how
+   * @param {boolean} how.inBackground - Accel was held
+   * @param {boolean} how.glance - Alt was held, asking for a glance
+   */
+  onRowKeyActivate(row, how) {
+    if (!how.glance) {
+      row.click();
+    }
+  }
   onListScrolledToEnd() {}
 
   isFilterActive(groupId, optionId) {
@@ -109,6 +125,8 @@ export class ZenLibrarySearchSection extends MozLitElement {
     if (super.firstUpdated) {
       super.firstUpdated();
     }
+
+    this.addEventListener("keydown", this.#onKeyDown);
 
     const results = this.querySelector(".zen-library-search-results");
     this.#sentinelObserver = new IntersectionObserver(
@@ -150,13 +168,104 @@ export class ZenLibrarySearchSection extends MozLitElement {
     }
     this.#searchDebounce = setTimeout(() => {
       this.#searchDebounce = null;
-      const query = value.trim();
-      if (query !== this.searchQuery) {
-        this.searchQuery = query;
-        this.onSearchChanged();
-      }
+      this.#applySearch(value);
     }, SEARCH_DEBOUNCE_MS);
   }
+
+  #applySearch(value) {
+    const query = value.trim();
+    if (query !== this.searchQuery) {
+      this.searchQuery = query;
+      this.#searchDone = Promise.resolve(this.onSearchChanged());
+    }
+  }
+
+  get #searchInput() {
+    return this.querySelector(".zen-library-search-box input");
+  }
+
+  /** @returns {Element[]} The rows the keyboard moves between, in order */
+  get #rows() {
+    return [
+      ...this.querySelectorAll(".zen-library-search-results .zen-library-row"),
+    ];
+  }
+
+  #focusRow(row) {
+    if (!row) {
+      return false;
+    }
+    row.tabIndex = -1;
+    row.focus();
+    row.scrollIntoView({ block: "nearest" });
+    return true;
+  }
+
+  /**
+   * Leaves the search box for the first row, once whatever was typed into it
+   * has been searched for, so a quick Tab doesn't land on stale results.
+   */
+  async #enterResults() {
+    const input = this.#searchInput;
+    if (this.#searchDebounce) {
+      clearTimeout(this.#searchDebounce);
+      this.#searchDebounce = null;
+      this.#applySearch(input.value);
+    }
+    await this.#searchDone;
+    await this.updateComplete;
+    if (document.activeElement === input) {
+      this.#focusRow(this.#rows[0]);
+    }
+  }
+
+  #onKeyDown = event => {
+    const input = this.#searchInput;
+    const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+    if (event.target === input) {
+      if (
+        (event.key === "Tab" && plain && !event.shiftKey) ||
+        (event.key === "ArrowDown" && plain)
+      ) {
+        event.preventDefault();
+        this.#enterResults();
+      }
+      return;
+    }
+
+    const row = event.target;
+    if (!row.classList?.contains("zen-library-row")) {
+      return;
+    }
+    const rows = this.#rows;
+    const index = rows.indexOf(row);
+    const back =
+      event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey);
+    const forward =
+      event.key === "ArrowDown" || (event.key === "Tab" && !event.shiftKey);
+    if (back) {
+      if (!this.#focusRow(rows[index - 1])) {
+        input.focus();
+      }
+    } else if (forward) {
+      this.#focusRow(rows[index + 1]);
+    } else if (event.key === "Enter") {
+      this.onRowKeyActivate(row, {
+        inBackground: event.getModifierState("Accel"),
+        glance: event.altKey,
+      });
+    } else if (event.key === "Escape") {
+      input.focus();
+    } else if (event.key.length === 1 && plain) {
+      // Typing again goes back to the search, which the key then lands in.
+      input.focus();
+      return;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  };
 
   #toggleFilter(group, optionId) {
     const key = `${group.id}:${optionId}`;
@@ -233,6 +342,13 @@ export class ZenLibrarySearchSection extends MozLitElement {
       this.#faded = true;
       this.setAttribute("fade-in", "true");
     }
+    await this.focusSearch();
+  }
+
+  /**
+   * Puts the caret in the search box, once it has been rendered.
+   */
+  async focusSearch() {
     await this.updateComplete;
     this.querySelector(".zen-library-search-box input")?.focus();
   }

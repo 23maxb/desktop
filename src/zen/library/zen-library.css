@@ -702,6 +702,14 @@ zen-library:not([open]) :is(.zen-library-search-header, .zen-library-filter-head
   &:hover {
     background: color-mix(in srgb, currentColor 10%, transparent);
   }
+
+  &:focus {
+    outline: none;
+  }
+
+  &:focus-visible {
+    background: color-mix(in srgb, var(--zen-primary-color) 25%, transparent);
+  }
 }
 
 .zen-library-row-icon {
