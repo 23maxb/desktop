@@ -233,6 +233,13 @@ export class ZenLibrarySearchSection extends MozLitElement {
       this.#faded = true;
       this.setAttribute("fade-in", "true");
     }
+    await this.focusSearch();
+  }
+
+  /**
+   * Puts the caret in the search box, once it has been rendered.
+   */
+  async focusSearch() {
     await this.updateComplete;
     this.querySelector(".zen-library-search-box input")?.focus();
   }

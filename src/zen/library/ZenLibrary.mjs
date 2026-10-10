@@ -449,11 +449,27 @@ export class ZenLibrary extends MozLitElement {
         lib.activeTab = tab;
       } else {
         lib.activeTab = tab;
-        this.animateProgress(1);
+        this.animateProgress(1).then(() => lib.#focusActiveSearch());
       }
       return;
     }
     this.animateProgress(opening ? 0 : 1);
+  }
+
+  /**
+   * Focuses the search box of the section being looked at, for a library
+   * opened straight onto it. The section's own `onShown` can't do this, as it
+   * runs while the library is still hidden.
+   */
+  async #focusActiveSearch() {
+    await this.updateComplete;
+    if (this.#target !== 1) {
+      return;
+    }
+    const section = [...(this._content?.children ?? [])].find(
+      el => el.dataset?.section === this.activeTab
+    );
+    await section?.focusSearch?.();
   }
 
   /**
