@@ -6,6 +6,7 @@
 prefs = ["browser.urlbar.closeOnWindowBlur=false"]
 support-files = [
   "head.js",
+  "site_data_hang.sjs",
   "!/browser/components/urlbar/tests/browser/head.js",
 ]
 
@@ -14,6 +15,8 @@ support-files = [
 ["browser_issue_7385.js"]
 
 ["browser_sidebar_provider.js"]
+
+["browser_site_data_clear_stuck_load.js"]
 
 ["browser_top_sites_shortcuts.js"]
 

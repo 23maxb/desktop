@@ -14,9 +14,15 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   FeatureCallout: "resource:///modules/asrouter/FeatureCallout.sys.mjs",
   gZenBoostsManager: "resource:///modules/zen/boosts/ZenBoostsManager.sys.mjs",
+  SiteDataManager: "resource:///modules/SiteDataManager.sys.mjs",
 });
 
 export class nsZenSiteDataPanel {
+  // The page each tab is still trying to open, before it commits. Until then
+  // the identity handler still describes the page before it, which is the
+  // wrong site to clear data for when the new one never loads.
+  #pendingLoads = new WeakMap();
+
   #iconMap = {
     install: "extension",
     "site-protection": "shield",
@@ -108,6 +114,7 @@ export class nsZenSiteDataPanel {
         }
       },
     });
+    this.#initPendingLoadTracking();
     this.window.addEventListener(
       "unload",
       () => {
@@ -184,10 +191,92 @@ export class nsZenSiteDataPanel {
     });
   }
 
+  #initPendingLoadTracking() {
+    const { STATE_START, STATE_STOP, STATE_IS_DOCUMENT } =
+      Ci.nsIWebProgressListener;
+    this.window.gBrowser.addTabsProgressListener({
+      onStateChange: (browser, webProgress, request, stateFlags) => {
+        if (!webProgress?.isTopLevel || !(stateFlags & STATE_IS_DOCUMENT)) {
+          return;
+        }
+        if (stateFlags & STATE_START) {
+          const uri = this.#requestURI(request);
+          if (uri) {
+            this.#pendingLoads.set(browser, uri);
+          }
+        } else if (stateFlags & STATE_STOP) {
+          this.#pendingLoads.delete(browser);
+        }
+      },
+      onLocationChange: (browser, webProgress) => {
+        if (webProgress?.isTopLevel) {
+          this.#pendingLoads.delete(browser);
+        }
+      },
+    });
+  }
+
+  #requestURI(request) {
+    try {
+      return request.QueryInterface(Ci.nsIChannel).originalURI;
+    } catch {}
+    try {
+      return Services.io.newURI(request.name);
+    } catch {}
+    return null;
+  }
+
+  /**
+   * The host whose data "Clear cookies and site data" would remove: the page
+   * still being opened if there is one, otherwise the current page.
+   *
+   * @returns {string} The host, or an empty string when there is none
+   */
+  #siteDataHost() {
+    const browser = this.window.gBrowser.selectedBrowser;
+    const uri = this.#pendingLoads.get(browser) ?? browser.currentURI;
+    try {
+      return uri.host;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * Clears the data of the page a tab is stuck opening, then tries opening
+   * it again. Pages that have loaded go through the identity handler, as in
+   * Firefox.
+   *
+   * @param {Event} event - The command from the menu item
+   */
+  async #clearSiteData(event) {
+    const { gBrowser, gIdentityHandler } = this.window;
+    const browser = gBrowser.selectedBrowser;
+    const pending = this.#pendingLoads.get(browser);
+    if (!pending) {
+      gIdentityHandler.clearSiteData(event);
+      return;
+    }
+    const host = this.#siteDataHost();
+    if (!host) {
+      return;
+    }
+    const baseDomain = lazy.SiteDataManager.getBaseDomainFromHost(host);
+    if (
+      !lazy.SiteDataManager.promptSiteDataRemoval(this.window, [baseDomain])
+    ) {
+      return;
+    }
+    await lazy.SiteDataManager.remove(baseDomain);
+    if (gBrowser.selectedBrowser === browser) {
+      this.window.openTrustedLinkIn(pending.spec, "current");
+    }
+  }
+
   #initContextMenuEventListener() {
     const kCommands = {
       context_zenClearSiteData: event => {
-        this.window.gIdentityHandler.clearSiteData(event);
+        this.#clearSiteData(event);
       },
       context_zenOpenGetAddons: () => {
         this.#openGetAddons();
@@ -201,6 +290,15 @@ export class nsZenSiteDataPanel {
     for (let [id, handler] of Object.entries(kCommands)) {
       this.document.getElementById(id).addEventListener("command", handler);
     }
+
+    // Nothing to clear on pages without a site, such as a new tab.
+    this.document
+      .getElementById("zenSiteDataActions")
+      .addEventListener("popupshowing", () => {
+        this.document
+          .getElementById("context_zenClearSiteData")
+          .toggleAttribute("disabled", !this.#siteDataHost());
+      });
   }
 
   #initUnifiedExtensionsManageHook() {
